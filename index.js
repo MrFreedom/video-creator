@@ -10,56 +10,54 @@ app.use(express.json({ limit: '50mb' }));
 app.get('/', (req, res) => res.send('SERVER IS LIVE'));
 
 app.post('/create-video', async (req, res) => {
-    console.log('--- START PROCESS ---');
     const { images } = req.body;
     const workDir = path.resolve();
     const timestamp = Date.now();
-    const outputPath = path.join(workDir, `final_${timestamp}.mp4`);
+    const outputPath = path.join(workDir, `video_${timestamp}.mp4`);
     const downloadedFiles = [];
 
     try {
-        // 1. Скачивание
+        console.log('--- START ---');
         for (let i = 0; i < images.length; i++) {
-            console.log(`Downloading: ${images[i]}`);
             const response = await axios({
                 url: images[i],
                 responseType: 'arraybuffer',
-                timeout: 30000
+                timeout: 15000
             });
-            const imgPath = path.join(workDir, `img_${timestamp}_${i}.jpg`);
+            const imgPath = path.join(workDir, `i_${i}.jpg`);
             fs.writeFileSync(imgPath, response.data);
             downloadedFiles.push(imgPath);
         }
 
-        // 2. Сборка видео через простейший фильтр
-        console.log('🎬 FFmpeg building...');
-        let command = ffmpeg();
-
-        downloadedFiles.forEach(file => {
-            command = command.input(file).inputOptions(['-loop 1', '-t 5']);
-        });
-
-        command
+        console.log('--- FFMPEG START ---');
+        ffmpeg()
+            .input(path.join(workDir, 'i_%d.jpg'))
+            .inputOptions(['-framerate 1/5', '-start_number 0'])
+            .outputOptions([
+                '-c:v libx264',
+                '-r 25',
+                '-pix_fmt yuv420p',
+                '-vf scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+                '-movflags +faststart'
+            ])
             .on('error', (err) => {
-                console.error('FFmpeg Error:', err.message);
+                console.error(err.message);
                 if (!res.headersSent) res.status(500).send(err.message);
             })
             .on('end', () => {
-                console.log('✅ Done! Sending file...');
+                console.log('--- DONE ---');
                 res.download(outputPath, () => {
-                    // Чистка
                     downloadedFiles.forEach(f => fs.existsSync(f) && fs.unlinkSync(f));
                     if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
                 });
             })
-            .mergeToFile(outputPath, workDir);
+            .save(outputPath);
 
     } catch (e) {
-        console.error('Global Error:', e.message);
+        console.error(e.message);
         if (!res.headersSent) res.status(500).send(e.message);
-        downloadedFiles.forEach(f => fs.existsSync(f) && fs.unlinkSync(f));
     }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
+app.listen(PORT, () => console.log(`READY ON ${PORT}`));
