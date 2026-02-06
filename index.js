@@ -56,7 +56,7 @@ app.post('/create-video', async (req, res) => {
         const response = await axios({
           url: imagesToUse[i],
           responseType: 'arraybuffer',
-          timeout: 10000
+          timeout: 30000
         });
         
         const imagePath = join(__dirname, `temp_${Date.now()}_${i}.jpg`);
