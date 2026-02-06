@@ -7,83 +7,59 @@ import path from 'path';
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-// Главная страница, чтобы видеть, что сервер живой
-app.get('/', (req, res) => res.send('SERVER IS READY ✅'));
+app.get('/', (req, res) => res.send('SERVER IS BACK ON 🚀'));
 
 app.post('/create-video', async (req, res) => {
-    console.log('📨 Получен запрос на создание видео...');
     const { images } = req.body;
-    
-    if (!images || !Array.isArray(images)) {
-        return res.status(400).send('Ошибка: Данные images должны быть массивом.');
-    }
-
     const timestamp = Date.now();
     const workDir = path.resolve();
-    const outputPath = path.join(workDir, `final_${timestamp}.mp4`);
-    const listPath = path.join(workDir, `list_${timestamp}.txt`);
-    const downloadedPaths = [];
+    const outputPath = path.join(workDir, `out_${timestamp}.mp4`);
+    const downloadedFiles = [];
 
     try {
-        // 1. Скачивание изображений
+        console.log('--- START ---');
         for (let i = 0; i < images.length; i++) {
-            console.log(`Скачивание файла ${i}...`);
-            const response = await axios({ 
-                url: images[i], 
-                responseType: 'arraybuffer', 
-                timeout: 30000 
+            const response = await axios({
+                url: images[i],
+                responseType: 'arraybuffer',
+                timeout: 20000
             });
-            const p = path.join(workDir, `file_${timestamp}_${i}.jpg`);
-            fs.writeFileSync(p, response.data);
-            downloadedPaths.push(p);
+            const imgPath = path.join(workDir, `img_${timestamp}_${i}.jpg`);
+            fs.writeFileSync(imgPath, response.data);
+            downloadedFiles.push(imgPath);
         }
 
-        // 2. Создание файла-списка для FFmpeg (гарантирует длительность)
-        let listContent = '';
-        downloadedPaths.forEach(p => {
-            listContent += `file '${p}'\nduration 5\n`;
+        // Самый примитивный метод сборки, который давал тебе 1.53МБ
+        const command = ffmpeg();
+        downloadedFiles.forEach(file => {
+            command.input(file).inputOptions(['-loop 1', '-t 5']);
         });
-        // Специфика concat: последний файл нужно продублировать без duration
-        listContent += `file '${downloadedPaths[downloadedPaths.length - 1]}'`;
-        fs.writeFileSync(listPath, listContent);
 
-        console.log('🎬 Запуск FFmpeg (ultrafast режим)...');
-        
-        ffmpeg()
-            .input(listPath)
-            .inputOptions(['-f concat', '-safe 0'])
+        command
+            .fps(25)
             .outputOptions([
-                '-c:v libx264',           // Кодек
-                '-pix_fmt yuv420p',       // Формат для совместимости
-                '-preset ultrafast',      // Максимальная скорость сборки
-                '-r 25',                  // Частота кадров
-                '-movflags +faststart'    // Метаданные в начало (убирает 0 секунд)
+                '-c:v libx264',
+                '-pix_fmt yuv420p',
+                '-preset ultrafast',
+                '-movflags +faststart'
             ])
             .on('error', (err) => {
-                console.error('Ошибка FFmpeg:', err.message);
-                if (!res.headersSent) res.status(500).send(err.message);
+                console.error(err.message);
+                res.status(500).send(err.message);
             })
             .on('end', () => {
-                console.log('✅ Видео готово к отправке!');
-                res.download(outputPath, (err) => {
-                    if (err) console.error('Ошибка при отправке файла:', err);
-                    
-                    // Удаляем временные файлы
-                    downloadedPaths.forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
-                    if (fs.existsSync(listPath)) fs.unlinkSync(listPath);
+                res.download(outputPath, () => {
+                    downloadedFiles.forEach(f => fs.existsSync(f) && fs.unlinkSync(f));
                     if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-                    console.log('🧹 Временные файлы удалены.');
                 });
             })
-            .save(outputPath);
+            .mergeToFile(outputPath, workDir);
 
     } catch (e) {
-        console.error('Критическая ошибка:', e.message);
-        if (!res.headersSent) res.status(500).send(e.message);
-        downloadedPaths.forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
-        if (fs.existsSync(listPath)) fs.unlinkSync(listPath);
+        res.status(500).send(e.message);
+        downloadedFiles.forEach(f => fs.existsSync(f) && fs.unlinkSync(f));
     }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚀 Сервер запущен на порту ${PORT}`));
+app.listen(PORT, () => console.log(`Ready on ${PORT}`));
