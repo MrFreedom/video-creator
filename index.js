@@ -7,69 +7,75 @@ import path from 'path';
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
+app.get('/', (req, res) => res.send('Server is Up! ✅'));
+
 app.post('/create-video', async (req, res) => {
+    console.log('📨 Request received');
     const { images } = req.body;
-    const workDir = path.resolve();
+    if (!images || !Array.isArray(images)) return res.status(400).send('No images');
+
     const timestamp = Date.now();
-    const videoPath = path.join(workDir, `video_${timestamp}.mp4`);
-    const listPath = path.join(workDir, `list_${timestamp}.txt`);
-    const downloadedFiles = [];
+    const workDir = path.resolve();
+    const outputPath = path.join(workDir, `final_${timestamp}.mp4`);
+    const downloadedPaths = [];
 
     try {
-        console.log('--- START PROCESS ---');
-        // 1. Скачивание с проверкой
+        // 1. Скачивание
         for (let i = 0; i < images.length; i++) {
-            const response = await axios({
-                url: images[i],
-                responseType: 'arraybuffer',
-                timeout: 15000,
-                headers: { 'Accept': 'image/*' }
+            console.log(`Downloading ${i}...`);
+            const response = await axios({ 
+                url: images[i], 
+                responseType: 'arraybuffer', 
+                timeout: 20000 
             });
-            const imgPath = path.join(workDir, `img_${timestamp}_${i}.jpg`);
-            fs.writeFileSync(imgPath, response.data);
-            downloadedFiles.push(imgPath);
-            console.log(`Image ${i} saved`);
+            const p = path.join(workDir, `img_${timestamp}_${i}.jpg`);
+            fs.writeFileSync(p, response.data);
+            downloadedPaths.push(p);
         }
 
-        // 2. Создание файла-списка для FFmpeg (гарантия длительности)
-        let listData = '';
-        downloadedFiles.forEach(file => {
-            listData += `file '${file}'\nduration 5\n`;
-        });
-        // FFmpeg требует повторения последнего файла без duration
-        listData += `file '${downloadedFiles[downloadedFiles.length - 1]}'`;
-        fs.writeFileSync(listPath, listData);
+        // 2. Сборка видео
+        console.log('🎬 Starting FFmpeg build...');
+        const command = ffmpeg();
 
-        // 3. Команда FFmpeg
-        ffmpeg()
-            .input(listPath)
-            .inputOptions(['-f concat', '-safe 0'])
+        // Добавляем каждый файл как отдельный вход с длительностью 5 секунд
+        downloadedPaths.forEach(p => {
+            command.input(p).inputOptions(['-loop 1', '-t 5']);
+        });
+
+        command
+            .fps(25)
+            .complexFilter([
+                // Склеиваем входы (n = кол-во картинок)
+                `concat=n=${downloadedPaths.length}:v=1:a=0 [v]`,
+                // Принудительно задаем формат пикселей для совместимости с плеерами
+                '[v]format=yuv420p[out]'
+            ], 'out')
             .outputOptions([
                 '-c:v libx264',
-                '-pix_fmt yuv420p',
-                '-preset superfast',
-                '-vf scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2'
+                '-preset ultrafast',
+                '-movflags +faststart', // Позволяет видео начать играть до полной загрузки
+                '-aspect 16:9'
             ])
             .on('error', (err) => {
-                console.error('FFmpeg error:', err.message);
+                console.error('FFmpeg Error:', err.message);
                 res.status(500).send(err.message);
             })
             .on('end', () => {
-                console.log('Video ready!');
-                res.download(videoPath, () => {
-                    // Удаляем мусор
-                    downloadedFiles.forEach(f => fs.existsSync(f) && fs.unlinkSync(f));
-                    if (fs.existsSync(listPath)) fs.unlinkSync(listPath);
-                    if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+                console.log('✅ Video generated successfully!');
+                res.download(outputPath, () => {
+                    // Чистка после отправки
+                    downloadedPaths.forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
+                    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
                 });
             })
-            .save(videoPath);
+            .save(outputPath);
 
     } catch (e) {
-        console.error('General error:', e.message);
+        console.error('Critical Error:', e.message);
         res.status(500).send(e.message);
+        downloadedPaths.forEach(p => fs.existsSync(p) && fs.unlinkSync(p));
     }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Server live on ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
