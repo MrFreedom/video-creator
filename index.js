@@ -7,48 +7,47 @@ import path from 'path';
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-app.get('/', (req, res) => res.send('SERVER IS BACK ON 🚀'));
+app.get('/', (req, res) => res.send('SERVER IS LIVE'));
 
 app.post('/create-video', async (req, res) => {
+    console.log('--- START PROCESS ---');
     const { images } = req.body;
-    const timestamp = Date.now();
     const workDir = path.resolve();
-    const outputPath = path.join(workDir, `out_${timestamp}.mp4`);
+    const timestamp = Date.now();
+    const outputPath = path.join(workDir, `final_${timestamp}.mp4`);
     const downloadedFiles = [];
 
     try {
-        console.log('--- START ---');
+        // 1. Скачивание
         for (let i = 0; i < images.length; i++) {
+            console.log(`Downloading: ${images[i]}`);
             const response = await axios({
                 url: images[i],
                 responseType: 'arraybuffer',
-                timeout: 20000
+                timeout: 30000
             });
             const imgPath = path.join(workDir, `img_${timestamp}_${i}.jpg`);
             fs.writeFileSync(imgPath, response.data);
             downloadedFiles.push(imgPath);
         }
 
-        // Самый примитивный метод сборки, который давал тебе 1.53МБ
-        const command = ffmpeg();
+        // 2. Сборка видео через простейший фильтр
+        console.log('🎬 FFmpeg building...');
+        let command = ffmpeg();
+
         downloadedFiles.forEach(file => {
-            command.input(file).inputOptions(['-loop 1', '-t 5']);
+            command = command.input(file).inputOptions(['-loop 1', '-t 5']);
         });
 
         command
-            .fps(25)
-            .outputOptions([
-                '-c:v libx264',
-                '-pix_fmt yuv420p',
-                '-preset ultrafast',
-                '-movflags +faststart'
-            ])
             .on('error', (err) => {
-                console.error(err.message);
-                res.status(500).send(err.message);
+                console.error('FFmpeg Error:', err.message);
+                if (!res.headersSent) res.status(500).send(err.message);
             })
             .on('end', () => {
+                console.log('✅ Done! Sending file...');
                 res.download(outputPath, () => {
+                    // Чистка
                     downloadedFiles.forEach(f => fs.existsSync(f) && fs.unlinkSync(f));
                     if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
                 });
@@ -56,10 +55,11 @@ app.post('/create-video', async (req, res) => {
             .mergeToFile(outputPath, workDir);
 
     } catch (e) {
-        res.status(500).send(e.message);
+        console.error('Global Error:', e.message);
+        if (!res.headersSent) res.status(500).send(e.message);
         downloadedFiles.forEach(f => fs.existsSync(f) && fs.unlinkSync(f));
     }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Ready on ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
