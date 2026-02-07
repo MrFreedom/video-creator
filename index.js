@@ -7,62 +7,67 @@ import path from 'path';
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-app.get('/', (req, res) => res.send('READY TO WORK ✅'));
+app.get('/', (req, res) => res.send('MINIMAL SERVER UP ✅'));
 
 app.post('/create-video', async (req, res) => {
-    console.log('--- НОВЫЙ ЗАПУСК ---');
+    console.log('📨 Request received');
     const { images } = req.body;
     const timestamp = Date.now();
     const workDir = path.resolve();
-    const finalVideo = path.join(workDir, `final_${timestamp}.mp4`);
+    const finalVideo = path.join(workDir, `out_${timestamp}.mp4`);
     const downloadedFiles = [];
 
     try {
-        // 1. Скачивание с жестким лимитом
+        // 1. Скачивание (без изменений)
         for (let i = 0; i < images.length; i++) {
-            console.log(`Скачиваю: ${i}`);
-            const response = await axios({
-                url: images[i],
-                responseType: 'arraybuffer',
-                timeout: 10000
+            const response = await axios({ 
+                url: images[i], 
+                responseType: 'arraybuffer', 
+                timeout: 10000 
             });
-            const imgPath = path.join(workDir, `img_${i}.jpg`);
+            const imgPath = path.join(workDir, `f_${i}.jpg`);
             fs.writeFileSync(imgPath, response.data);
             downloadedFiles.push(imgPath);
         }
 
-        // 2. Сборка БЕЗ сложных фильтров (самый легкий путь для CPU)
-        console.log('🎬 Начинаю рендер...');
-        ffmpeg()
-            .input(path.join(workDir, 'img_%d.jpg'))
-            .inputOptions(['-framerate 1/5', '-start_number 0'])
+        // 2. Ультра-минималистичный FFmpeg
+        console.log('🎬 Starting minimal build...');
+        
+        let command = ffmpeg();
+
+        // Добавляем входы по одному, это стабильнее для RAM
+        downloadedFiles.forEach(file => {
+            command.input(file).inputOptions(['-loop 1', '-t 5']);
+        });
+
+        command
             .outputOptions([
                 '-c:v libx264',
                 '-pix_fmt yuv420p',
-                '-preset superfast', // Чуть медленнее чем ultrafast, но надежнее для заголовков
-                '-movflags +faststart', // Фиксит ошибку 0xc00d36e5
-                '-r 25'
+                '-preset ultrafast', // Самый быстрый и легкий для RAM
+                '-tune stillimage',  // Оптимизация под слайдшоу
+                '-movflags +faststart'
             ])
+            .on('start', (cmd) => console.log('FFmpeg command line:', cmd))
             .on('error', (err) => {
                 console.error('FFmpeg Error:', err.message);
                 if (!res.headersSent) res.status(500).send(err.message);
             })
             .on('end', () => {
-                console.log('✅ Видео готово!');
-                res.download(finalVideo, (err) => {
-                    // Чистка ПОСЛЕ отправки
+                console.log('✅ Success!');
+                res.download(finalVideo, () => {
                     downloadedFiles.forEach(f => fs.existsSync(f) && fs.unlinkSync(f));
                     if (fs.existsSync(finalVideo)) fs.unlinkSync(finalVideo);
                 });
             })
-            .save(finalVideo);
+            .mergeToFile(finalVideo, workDir); // Используем merge, так как он лучше распределяет память
 
     } catch (e) {
-        console.error('Критический сбой:', e.message);
+        console.error('Global Error:', e.message);
         if (!res.headersSent) res.status(500).send(e.message);
         downloadedFiles.forEach(f => fs.existsSync(f) && fs.unlinkSync(f));
     }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Server running on ${PORT}`));
+app.listen(PORT, () => console.log(`Live on ${PORT}`));
